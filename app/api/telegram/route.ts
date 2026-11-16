@@ -5,6 +5,9 @@ import { getSupabaseClient } from "@/lib/supabase";
 type TelegramMessage = {
   message_id: number;
   text: string;
+  chat: {
+    id: number;
+  };
 };
 
 type TelegramUpdate = {
@@ -15,26 +18,54 @@ async function createTicket(ticket: ParsedTicket & {
   source: "telegram";
   telegram_message_id: number;
   original_text: string;
-}) {
-  const { error } = await getSupabaseClient().from("tickets").insert({
-    ...ticket,
-    priority: ticket.priority === "Urgent" ? "Critical" : ticket.priority,
-  });
+}): Promise<{ id: string | number }> {
+  const { data, error } = await getSupabaseClient()
+    .from("tickets")
+    .insert({
+      ...ticket,
+      priority: ticket.priority === "Urgent" ? "Critical" : ticket.priority,
+    })
+    .select("id")
+    .single();
 
   if (error) {
     throw new Error(`Failed to create Telegram ticket: ${error.message}`);
+  }
+
+  return data;
+}
+
+async function sendTelegramMessage(chatId: number, text: string) {
+  const botToken = process.env.TELEGRAM_BOT_TOKEN;
+  if (!botToken) {
+    throw new Error("Missing TELEGRAM_BOT_TOKEN environment variable");
+  }
+
+  const response = await fetch(`https://api.telegram.org/bot${botToken}/sendMessage`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ chat_id: chatId, text }),
+  });
+
+  if (!response.ok) {
+    throw new Error(`Telegram sendMessage request failed with status ${response.status}`);
   }
 }
 
 async function processMessage(message: TelegramMessage) {
   const parsed = await parseTicketFromText(message.text);
 
-  await createTicket({
+  const ticket = await createTicket({
     ...parsed,
     source: "telegram",
     telegram_message_id: message.message_id,
     original_text: message.text,
   });
+
+  await sendTelegramMessage(
+    message.chat.id,
+    `Đã ghi nhận ticket #${ticket.id}: ${parsed.title}\nMức độ ưu tiên: ${parsed.priority}`,
+  );
 }
 
 export async function POST(request: Request) {
@@ -56,9 +87,12 @@ export async function POST(request: Request) {
     return NextResponse.json({ ok: true });
   }
 
-  processMessage(message).catch((error: unknown) => {
+  try {
+    await processMessage(message);
+  } catch (error: unknown) {
     console.error("Failed to process Telegram message", error);
-  });
+    return NextResponse.json({ error: "Failed to process Telegram message" }, { status: 500 });
+  }
 
   return NextResponse.json({ ok: true });
 }

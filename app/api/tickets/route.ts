@@ -57,12 +57,11 @@ export async function POST(request: Request) {
     typeof input.title !== "string" ||
     !input.title.trim() ||
     typeof input.description !== "string" ||
-    !input.description.trim() ||
     !isSource(input.source) ||
     !normalizePriority(input.priority)
   ) {
     return NextResponse.json(
-      { error: "title, description, source, and a valid priority are required" },
+      { error: "title and a valid priority are required" },
       { status: 400 },
     );
   }
