@@ -14,17 +14,25 @@ type TelegramUpdate = {
   message?: TelegramMessage;
 };
 
+const MAX_PROCESS_ATTEMPTS = 2;
+
 async function createTicket(ticket: ParsedTicket & {
   source: "telegram";
   telegram_message_id: number;
   original_text: string;
 }): Promise<{ id: string | number }> {
+  const ticketData = {
+    title: ticket.title,
+    description: ticket.description,
+    category: ticket.category,
+    source: ticket.source,
+    telegram_message_id: ticket.telegram_message_id,
+    original_text: ticket.original_text,
+    priority: ticket.priority === "Urgent" ? "Critical" : ticket.priority,
+  };
   const { data, error } = await getSupabaseClient()
     .from("tickets")
-    .insert({
-      ...ticket,
-      priority: ticket.priority === "Urgent" ? "Critical" : ticket.priority,
-    })
+    .insert(ticketData)
     .select("id")
     .single();
 
@@ -87,22 +95,29 @@ export async function POST(request: Request) {
     return NextResponse.json({ ok: true });
   }
 
-  try {
-    await processMessage(message);
-  } catch (error: unknown) {
-    console.error("Failed to process Telegram message", error);
-
+  let lastError: unknown;
+  for (let attempt = 1; attempt <= MAX_PROCESS_ATTEMPTS; attempt += 1) {
     try {
-      await sendTelegramMessage(
-        message.chat.id,
-        "Xin lỗi, hệ thống chưa thể xử lý yêu cầu của bạn lúc này. Vui lòng thử lại sau.",
+      await processMessage(message);
+      return NextResponse.json({ ok: true });
+    } catch (error: unknown) {
+      lastError = error;
+      console.error(
+        `Failed to process Telegram message (attempt ${attempt}/${MAX_PROCESS_ATTEMPTS})`,
+        error,
       );
-    } catch (notificationError: unknown) {
-      console.error("Failed to send Telegram error message", notificationError);
-      return NextResponse.json({ error: "Failed to process Telegram message" }, { status: 500 });
     }
+  }
 
-    return NextResponse.json({ ok: true });
+  console.error("Failed to process Telegram message after retry", lastError);
+
+  try {
+    await sendTelegramMessage(
+      message.chat.id,
+      "Xin lỗi, hệ thống chưa thể xử lý yêu cầu của bạn lúc này. Vui lòng thử lại sau.",
+    );
+  } catch (notificationError: unknown) {
+    console.error("Failed to send Telegram error message", notificationError);
   }
 
   return NextResponse.json({ ok: true });
