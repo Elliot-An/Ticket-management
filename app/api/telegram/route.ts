@@ -91,7 +91,18 @@ export async function POST(request: Request) {
     await processMessage(message);
   } catch (error: unknown) {
     console.error("Failed to process Telegram message", error);
-    return NextResponse.json({ error: "Failed to process Telegram message" }, { status: 500 });
+
+    try {
+      await sendTelegramMessage(
+        message.chat.id,
+        "Xin lỗi, hệ thống chưa thể xử lý yêu cầu của bạn lúc này. Vui lòng thử lại sau.",
+      );
+    } catch (notificationError: unknown) {
+      console.error("Failed to send Telegram error message", notificationError);
+      return NextResponse.json({ error: "Failed to process Telegram message" }, { status: 500 });
+    }
+
+    return NextResponse.json({ ok: true });
   }
 
   return NextResponse.json({ ok: true });
